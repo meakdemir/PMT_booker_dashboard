@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://api.playmoretennis.com https://api.github.com; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Court Booker</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>Court Booker</h1>
+    <p class="note">Choose courts to book when they are released</p>
+  </header>
+
+  <main>
+    <p id="message" class="message" role="status" hidden></p>
+
+    <section id="connect" class="card" hidden>
+      <h2>Connect this device</h2>
+      <p class="note">This page is public but holds no data. It only works with your logins, which stay in this browser.</p>
+
+      <form id="pmt-login" class="stack" hidden>
+        <h3>Play More Tennis login</h3>
+        <label for="pmt-email">Email</label>
+        <input id="pmt-email" type="email" autocomplete="username" required>
+        <label for="pmt-password">Password</label>
+        <input id="pmt-password" type="password" autocomplete="current-password" required>
+        <p class="note">Sent only to Play More Tennis. The password isn't saved; this browser keeps the login session it gets back.</p>
+        <button type="submit">Log in</button>
+      </form>
+
+      <form id="github-login" class="stack" hidden>
+        <h3>GitHub token</h3>
+        <ol class="note steps">
+          <li><a href="https://github.com/settings/personal-access-tokens/new?name=Court+Booker+dashboard&description=Edit+booking+picks+only&target_name=meakdemir&expires_in=365&actions_variables=write&issues=read" target="_blank" rel="noreferrer">Open the token page</a>. The permissions are already filled in.</li>
+          <li>Under Repository access, choose Only select repositories, then PMT_booker.</li>
+          <li>Generate the token and paste it here.</li>
+        </ol>
+        <label for="github-token">Token</label>
+        <input id="github-token" type="password" autocomplete="off" required>
+        <p class="note">Kept in this browser. It can edit your picks and read results, but can't touch the code or your saved password.</p>
+        <button type="submit">Save token</button>
+      </form>
+    </section>
+
+    <div id="app" hidden>
+      <section class="card">
+        <div class="row">
+          <h2>Automatic booking <span id="switch-state" class="pill">Off</span></h2>
+          <button id="switch-button" type="button">Turn on</button>
+        </div>
+        <p id="switch-note" class="note"></p>
+      </section>
+
+      <form id="add-pick" class="card stack">
+        <h2>Add a booking</h2>
+
+        <fieldset class="segments">
+          <legend>How often</legend>
+          <label><input id="mode-once" type="radio" name="mode" checked> <span>One date</span></label>
+          <label><input id="mode-weekly" type="radio" name="mode"> <span>Every week</span></label>
+        </fieldset>
+
+        <div id="date-field" class="stack">
+          <label for="date">Date</label>
+          <input id="date" type="date">
+        </div>
+        <div id="weekday-field" class="stack" hidden>
+          <label for="weekday">Day</label>
+          <select id="weekday"></select>
+        </div>
+        <p id="late-note" class="note warn" hidden>Tonight's last run has probably started, so this may not be picked up.</p>
+
+        <div class="stack">
+          <h3>Times, in the order you'd like them</h3>
+          <p id="preview-note" class="note"></p>
+          <div id="times" class="chips"></div>
+        </div>
+
+        <div class="stack">
+          <label for="court">Preferred court</label>
+          <select id="court"></select>
+          <p class="note">If it's taken, the booker tries the other courts at the same time.</p>
+        </div>
+
+        <div class="stack">
+          <h3>Opponent</h3>
+          <div id="opponent-picked" class="row" hidden>
+            <span id="opponent-name"></span>
+            <button id="opponent-clear" type="button" class="quiet">Change</button>
+          </div>
+          <div id="opponent-search-area" class="stack">
+            <label for="opponent-search">Search members</label>
+            <input id="opponent-search" type="search" autocomplete="off">
+            <ul id="opponent-results" class="plain"></ul>
+          </div>
+          <label class="check"><input id="separately" type="checkbox"> <span>I'll arrange my opponent myself</span></label>
+        </div>
+
+        <button type="submit">Save booking</button>
+      </form>
+
+      <section class="card">
+        <h2>Your bookings to make</h2>
+        <p id="picks-empty" class="note">Nothing saved yet.</p>
+        <ul id="picks" class="plain"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Recent results</h2>
+        <p id="results-empty" class="note">No attempts yet.</p>
+        <ul id="results" class="plain links"></ul>
+      </section>
+
+      <button id="log-out" type="button" class="quiet wide">Log out on this device</button>
+    </div>
+  </main>
+</body>
+</html>

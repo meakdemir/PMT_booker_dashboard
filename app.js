@@ -1,7 +1,8 @@
 import {
-  FACILITY_ID, MAX_TIMES, WEEKDAYS, addDays, attemptLabel, dateLabel, earliestDate, emptyPlan, freeCourts,
-  hourStarts, isMemberHere, memberSearchPath, newPick, nextOccurrence, parsePlan, pickTitle, slotsFor,
-  toggleSlot, tooLateTonight, ukMinutes, ukToday, validateDraft, weekdayOf, weeklyLabel, withoutPastPicks,
+  FACILITY_ID, MAX_TIMES, WEEKDAYS, addDays, attemptLabel, dateLabel, daySettings, daySummary, earliestDate,
+  emptyPlan, freeCourts, hourStarts, isMemberHere, memberSearchPath, newPick, nextOccurrence, parsePlan,
+  pickTitle, setDaySettings, slotsFor, toggleSlot, tooLateTonight, ukMinutes, ukToday, validateDraft,
+  weekdayOf, weeklyLabel, withoutPastPicks,
 } from './logic.js';
 
 const REPO = 'meakdemir/PMT_booker';
@@ -234,16 +235,17 @@ const onceOpponent = opponentPicker('once', {
   write: (member) => { state.draft.opponent = member; },
 });
 
-const weeklyOpponent = opponentPicker('weekly', {
-  read: () => state.plan.weekly.opponent,
+// One per day, kept between renders so a search in progress isn't lost.
+const dayOpponents = Object.fromEntries(WEEKDAYS.map((day) => [day, opponentPicker(day.toLowerCase(), {
+  read: () => daySettings(state.plan.weekly, day).opponent,
   write: (member) => {
-    state.plan.weekly = { ...state.plan.weekly, opponent: member };
+    state.plan.weekly = setDaySettings(state.plan.weekly, day, { opponent: member });
   },
   afterChange: () => {
-    renderWeeklyOpponentNote();
+    renderWeekly();
     queueWeeklySave();
   },
-});
+})]));
 
 // --- Rendering -------------------------------------------------------------------
 
@@ -346,8 +348,35 @@ function renderWeeklySummary() {
   const days = WEEKDAYS.filter((day) => slotsFor(weekly, day).length);
   $('weekly-summary').replaceChildren(...(days.length
     ? days.map((day) => el('li', {},
-      el('strong', { textContent: `${day}: ` }), slotsFor(weekly, day).join(', ')))
+      el('strong', { textContent: `${day}: ` }), daySummary(weekly, day, state.courts)))
     : [el('li', { class: 'note', textContent: 'No slots chosen yet.' })]));
+}
+
+function daySettingsForm(day) {
+  const { opponent, courts } = daySettings(state.plan.weekly, day);
+  const select = el('select', {
+    id: `${day.toLowerCase()}-court`,
+    onchange: () => {
+      const court = select.value ? [Number(select.value)] : [];
+      state.plan.weekly = setDaySettings(state.plan.weekly, day, { courts: court });
+      renderWeeklySummary();
+      queueWeeklySave();
+    },
+  });
+  courtOptions(select, courts[0]);
+
+  const picker = dayOpponents[day];
+  picker.render();
+  const opponentArea = el('div', { class: 'stack' },
+    el('p', { class: 'field-label', textContent: `${day}'s opponent` }), picker.root);
+  if (!opponent) {
+    opponentArea.append(el('p', { class: 'note', textContent: 'None chosen, so you\'ll arrange your own.' }));
+  }
+
+  return el('div', { class: 'stack day-settings' },
+    el('div', { class: 'stack' },
+      el('label', { htmlFor: select.id, textContent: `${day}'s preferred court` }), select),
+    opponentArea);
 }
 
 function renderWeeklyDays() {
@@ -390,18 +419,14 @@ function renderWeeklyDays() {
         textContent: 'Tonight\'s last run has probably started, so this change may not count until next week.',
       }));
     }
+    if (chosen.length) section.append(daySettingsForm(day));
     return section;
   }));
-}
-
-function renderWeeklyOpponentNote() {
-  $('weekly-opponent-note').hidden = !!state.plan.weekly.opponent;
 }
 
 function renderWeekly() {
   renderWeeklySummary();
   renderWeeklyDays();
-  renderWeeklyOpponentNote();
 }
 
 function renderResults() {
@@ -502,9 +527,7 @@ async function loadApp() {
     renderView();
     renderSwitch();
     courtOptions($('court'), null);
-    courtOptions($('weekly-court'), state.plan.weekly.courts[0]);
     onceOpponent.render();
-    weeklyOpponent.render();
     renderPicks();
     renderWeekly();
     renderResults();
@@ -570,7 +593,6 @@ async function addPick(event) {
 
 function wire() {
   $('once-opponent').append(onceOpponent.root);
-  $('weekly-opponent').append(weeklyOpponent.root);
   $('pmt-login').addEventListener('submit', logInToPmt);
   $('github-login').addEventListener('submit', saveGithubToken);
   $('log-out').addEventListener('click', logOut);
@@ -592,11 +614,6 @@ function wire() {
   });
   $('court').addEventListener('change', () => {
     state.draft.court = $('court').value ? Number($('court').value) : null;
-  });
-  $('weekly-court').addEventListener('change', () => {
-    const court = $('weekly-court').value;
-    state.plan.weekly = { ...state.plan.weekly, courts: court ? [Number(court)] : [] };
-    queueWeeklySave();
   });
   $('separately').addEventListener('change', () => {
     state.draft.separately = $('separately').checked;

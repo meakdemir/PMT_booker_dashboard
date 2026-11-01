@@ -117,21 +117,32 @@ export function isMemberHere(attributes) {
 }
 
 export function emptyWeekly() {
-  return { slots: [], opponent: null, courts: [] };
+  return { slots: [], days: {} };
 }
 
 export function emptyPlan() {
   return { live: false, picks: [], weekly: emptyWeekly() };
 }
 
+function parseWeekly(raw) {
+  const slots = Array.isArray(raw?.slots) ? raw.slots : [];
+  const days = { ...(raw?.days || {}) };
+  // Plans saved before days had their own settings kept one court and opponent for all.
+  if (raw?.opponent || raw?.courts?.length) {
+    for (const { weekday } of slots) {
+      days[weekday] ||= { opponent: raw.opponent ?? null, courts: raw.courts ?? [] };
+    }
+  }
+  return { slots, days };
+}
+
 export function parsePlan(text) {
   if (!text || !text.trim()) return emptyPlan();
   const data = JSON.parse(text);
-  const weekly = { ...emptyWeekly(), ...(data.weekly || {}) };
   return {
     live: data.live === true,
     picks: Array.isArray(data.picks) ? data.picks : [],
-    weekly: { ...weekly, slots: Array.isArray(weekly.slots) ? weekly.slots : [] },
+    weekly: parseWeekly(data.weekly),
   };
 }
 
@@ -150,6 +161,22 @@ export function toggleSlot(weekly, weekday, time) {
     : [...weekly.slots, { weekday, time }];
   slots.sort((a, b) => WEEKDAYS.indexOf(a.weekday) - WEEKDAYS.indexOf(b.weekday) || a.time.localeCompare(b.time));
   return { ...weekly, slots };
+}
+
+export function daySettings(weekly, weekday) {
+  return { opponent: null, courts: [], ...(weekly.days[weekday] || {}) };
+}
+
+export function setDaySettings(weekly, weekday, changes) {
+  const settings = { ...daySettings(weekly, weekday), ...changes };
+  return { ...weekly, days: { ...weekly.days, [weekday]: settings } };
+}
+
+export function daySummary(weekly, weekday, courts) {
+  const { opponent, courts: preferred } = daySettings(weekly, weekday);
+  const court = courts.find((item) => item.id === preferred[0]);
+  return `${slotsFor(weekly, weekday).join(', ')} on ${court ? court.name : 'any court'}, `
+    + (opponent ? `with ${opponent.name}` : 'arranging your own opponent');
 }
 
 export function validateDraft(draft, today) {

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  addDays, attemptLabel, dateLabel, earliestDate, emptyPlan, freeCourts, hourStarts, isMemberHere, memberSearchPath,
-  newPick, nextOccurrence, parsePlan, slotsFor, toggleSlot, tooLateTonight, ukMinutes, ukToday, validateDraft,
-  weekdayOf, weeklyLabel, withoutPastPicks,
+  addDays, attemptLabel, dateLabel, daySettings, daySummary, earliestDate, emptyPlan, freeCourts, hourStarts,
+  isMemberHere, memberSearchPath, newPick, nextOccurrence, parsePlan, setDaySettings, slotsFor, toggleSlot,
+  tooLateTonight, ukMinutes, ukToday, validateDraft, weekdayOf, weeklyLabel, withoutPastPicks,
 } from '../logic.js';
 
 const TODAY = '2026-11-01'; // a Sunday
@@ -83,7 +83,7 @@ test('saved picks parse safely and default to off', () => {
 });
 
 test('past one-date picks are tidied away and the weekly plan stays', () => {
-  const weekly = { slots: [{ weekday: 'Monday', time: '19:00' }], opponent: null, courts: [] };
+  const weekly = { slots: [{ weekday: 'Monday', time: '19:00' }], days: {} };
   const plan = { live: true, picks: [{ date: '2026-10-01' }, { date: TODAY }], weekly };
   const tidied = withoutPastPicks(plan, TODAY);
   assert.equal(tidied.picks.length, 1);
@@ -108,12 +108,45 @@ test('tapping weekly slots adds and removes them, kept in day and time order', (
   assert.deepEqual(slotsFor(weekly, 'Tuesday'), []);
 });
 
-test('tapping a slot keeps the plan\'s court and opponent', () => {
-  const weekly = { slots: [], opponent: { id: 42, name: 'A B' }, courts: [5] };
+test('tapping a slot keeps each day\'s court and opponent', () => {
+  const weekly = { slots: [], days: { Monday: { opponent: { id: 42, name: 'A B' }, courts: [5] } } };
   const changed = toggleSlot(weekly, 'Monday', '19:00');
-  assert.deepEqual(changed.opponent, weekly.opponent);
-  assert.deepEqual(changed.courts, [5]);
+  assert.deepEqual(changed.days, weekly.days);
   assert.deepEqual(weekly.slots, []);
+  const removed = toggleSlot(changed, 'Monday', '19:00');
+  assert.deepEqual(daySettings(removed, 'Monday').courts, [5]);
+});
+
+test('each day has its own court and opponent, defaulting to any court and no opponent', () => {
+  let weekly = emptyPlan().weekly;
+  assert.deepEqual(daySettings(weekly, 'Monday'), { opponent: null, courts: [] });
+  weekly = setDaySettings(weekly, 'Monday', { courts: [5] });
+  weekly = setDaySettings(weekly, 'Monday', { opponent: { id: 42, name: 'A B' } });
+  weekly = setDaySettings(weekly, 'Thursday', { courts: [15] });
+  assert.deepEqual(daySettings(weekly, 'Monday'), { opponent: { id: 42, name: 'A B' }, courts: [5] });
+  assert.deepEqual(daySettings(weekly, 'Thursday'), { opponent: null, courts: [15] });
+  assert.deepEqual(daySettings(weekly, 'Sunday'), { opponent: null, courts: [] });
+});
+
+test('a plan saved with one court and opponent gives them to its days', () => {
+  const old = '{"weekly":{"slots":[{"weekday":"Monday","time":"19:00"}],"opponent":{"id":42,"name":"A B"},"courts":[5]}}';
+  const { weekly } = parsePlan(old);
+  assert.deepEqual(daySettings(weekly, 'Monday'), { opponent: { id: 42, name: 'A B' }, courts: [5] });
+  assert.deepEqual(daySettings(weekly, 'Tuesday'), { opponent: null, courts: [] });
+  assert.deepEqual(Object.keys(weekly).sort(), ['days', 'slots']);
+});
+
+test('a day\'s own settings are not overwritten by older plan-wide ones', () => {
+  const mixed = '{"weekly":{"slots":[{"weekday":"Monday","time":"19:00"}],"opponent":{"id":42,"name":"A B"},"courts":[5],"days":{"Monday":{"opponent":null,"courts":[15]}}}}';
+  assert.deepEqual(daySettings(parsePlan(mixed).weekly, 'Monday'), { opponent: null, courts: [15] });
+});
+
+test('the summary reads naturally for each day', () => {
+  const courts = [{ id: 5, name: 'Court 2' }];
+  let weekly = toggleSlot(toggleSlot(emptyPlan().weekly, 'Monday', '20:00'), 'Monday', '19:00');
+  assert.equal(daySummary(weekly, 'Monday', courts), '19:00, 20:00 on any court, arranging your own opponent');
+  weekly = setDaySettings(weekly, 'Monday', { courts: [5], opponent: { id: 42, name: 'A B' } });
+  assert.equal(daySummary(weekly, 'Monday', courts), '19:00, 20:00 on Court 2, with A B');
 });
 
 test('a draft must be complete before it can be saved', () => {

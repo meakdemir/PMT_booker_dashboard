@@ -198,6 +198,8 @@ button.wide { width: 100%; }
 
 .days { display: flex; flex-direction: column; gap: 18px; }
 .day { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
+.card.stack .day-settings { gap: 14px; margin-top: 6px; }
+.field-label { font-weight: 600; font-size: 0.9375rem; }
 
 .pick { border-top: 1px solid var(--line); padding-top: 12px; }
 .pick:first-child { border-top: 0; padding-top: 0; }

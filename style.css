@@ -120,6 +120,7 @@ button.quiet {
 }
 
 button.wide { width: 100%; }
+#switch-button { flex-shrink: 0; white-space: nowrap; }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -193,7 +194,10 @@ button.wide { width: 100%; }
 
 .plain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 #picks, #results { margin-top: 12px; }
-#opponent-results:empty { display: none; }
+.plain:empty { display: none; }
+
+.days { display: flex; flex-direction: column; gap: 18px; }
+.day { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
 
 .pick { border-top: 1px solid var(--line); padding-top: 12px; }
 .pick:first-child { border-top: 0; padding-top: 0; }

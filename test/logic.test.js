@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  addDays, attemptLabel, dateLabel, earliestDate, freeCourts, hourStarts, isMemberHere, memberSearchPath,
-  newPick, nextAttempt, nextOccurrence, parsePlan, tooLateTonight, ukMinutes, ukToday, validateDraft,
-  weekdayOf, withoutPastPicks,
+  addDays, attemptLabel, dateLabel, earliestDate, emptyPlan, freeCourts, hourStarts, isMemberHere, memberSearchPath,
+  newPick, nextOccurrence, parsePlan, slotsFor, toggleSlot, tooLateTonight, ukMinutes, ukToday, validateDraft,
+  weekdayOf, weeklyLabel, withoutPastPicks,
 } from '../logic.js';
 
 const TODAY = '2026-11-01'; // a Sunday
@@ -28,17 +28,14 @@ test('the earliest pickable date is the one released at the coming midnight', ()
 });
 
 test('a pick opens seven days ahead and says when it will be booked', () => {
-  const pick = { date: '2026-11-20', times: ['19:00'] };
-  assert.deepEqual(nextAttempt(pick, TODAY), { date: '2026-11-20', opensOn: '2026-11-13' });
-  assert.equal(attemptLabel(pick, TODAY), 'Booking at 00:00 on Fri 13 Nov');
-  assert.equal(attemptLabel({ date: '2026-11-09', times: [] }, TODAY), 'Booking tonight at 00:00 (Mon 2 Nov)');
-  assert.equal(attemptLabel({ weekday: 'Monday', times: [] }, TODAY), 'Next: Mon 9 Nov, booking tonight at 00:00 (Mon 2 Nov)');
-  assert.equal(attemptLabel({ weekday: 'Monday', paused: true, times: [] }, TODAY), 'Paused');
+  assert.equal(attemptLabel({ date: '2026-11-20' }, TODAY), 'Booking at 00:00 on Fri 13 Nov');
+  assert.equal(attemptLabel({ date: '2026-11-09' }, TODAY), 'Booking tonight at 00:00 (Mon 2 Nov)');
+  assert.equal(attemptLabel({ date: '2026-11-08' }, TODAY), 'Already released');
 });
 
-test('dates already released cannot be attempted', () => {
-  assert.equal(nextAttempt({ date: '2026-11-08', times: [] }, TODAY), null);
-  assert.equal(attemptLabel({ date: '2026-11-08', times: [] }, TODAY), 'Already released');
+test('a weekly day says when its next booking happens', () => {
+  assert.equal(weeklyLabel('Monday', TODAY), 'Next: Mon 9 Nov, booking tonight at 00:00 (Mon 2 Nov)');
+  assert.equal(weeklyLabel('Thursday', TODAY), 'Next: Thu 12 Nov, booking at 00:00 on Thu 5 Nov');
 });
 
 test('warns only once tonight\'s last run has probably started', () => {
@@ -77,32 +74,62 @@ test('only members of this facility count', () => {
 });
 
 test('saved picks parse safely and default to off', () => {
-  assert.deepEqual(parsePlan(''), { live: false, picks: [] });
-  assert.deepEqual(parsePlan('{"live":"yes"}'), { live: false, picks: [] });
+  assert.deepEqual(parsePlan(''), emptyPlan());
+  assert.deepEqual(parsePlan('{"live":"yes"}'), emptyPlan());
   assert.equal(parsePlan('{"live":true,"picks":[]}').live, true);
+  assert.deepEqual(parsePlan('{"live":true,"picks":[]}').weekly, emptyPlan().weekly);
+  assert.deepEqual(parsePlan('{"weekly":{"slots":"oops"}}').weekly.slots, []);
   assert.throws(() => parsePlan('{oops'));
 });
 
-test('past one-off picks are tidied away but weekly ones stay', () => {
-  const plan = { live: true, picks: [{ date: '2026-10-01' }, { date: TODAY }, { weekday: 'Monday' }] };
-  assert.equal(withoutPastPicks(plan, TODAY).picks.length, 2);
+test('past one-date picks are tidied away and the weekly plan stays', () => {
+  const weekly = { slots: [{ weekday: 'Monday', time: '19:00' }], opponent: null, courts: [] };
+  const plan = { live: true, picks: [{ date: '2026-10-01' }, { date: TODAY }], weekly };
+  const tidied = withoutPastPicks(plan, TODAY);
+  assert.equal(tidied.picks.length, 1);
+  assert.deepEqual(tidied.weekly, weekly);
+});
+
+test('tapping weekly slots adds and removes them, kept in day and time order', () => {
+  let weekly = emptyPlan().weekly;
+  weekly = toggleSlot(weekly, 'Sunday', '16:00');
+  weekly = toggleSlot(weekly, 'Monday', '20:00');
+  weekly = toggleSlot(weekly, 'Monday', '19:00');
+  weekly = toggleSlot(weekly, 'Thursday', '19:00');
+  assert.deepEqual(weekly.slots, [
+    { weekday: 'Monday', time: '19:00' },
+    { weekday: 'Monday', time: '20:00' },
+    { weekday: 'Thursday', time: '19:00' },
+    { weekday: 'Sunday', time: '16:00' },
+  ]);
+  assert.deepEqual(slotsFor(weekly, 'Monday'), ['19:00', '20:00']);
+  weekly = toggleSlot(weekly, 'Monday', '19:00');
+  assert.deepEqual(slotsFor(weekly, 'Monday'), ['20:00']);
+  assert.deepEqual(slotsFor(weekly, 'Tuesday'), []);
+});
+
+test('tapping a slot keeps the plan\'s court and opponent', () => {
+  const weekly = { slots: [], opponent: { id: 42, name: 'A B' }, courts: [5] };
+  const changed = toggleSlot(weekly, 'Monday', '19:00');
+  assert.deepEqual(changed.opponent, weekly.opponent);
+  assert.deepEqual(changed.courts, [5]);
+  assert.deepEqual(weekly.slots, []);
 });
 
 test('a draft must be complete before it can be saved', () => {
-  const base = { mode: 'once', date: '2026-11-09', times: ['19:00'], opponent: { id: 1, name: 'A' }, separately: false };
+  const base = { date: '2026-11-09', times: ['19:00'], opponent: { id: 1, name: 'A' }, separately: false };
   assert.equal(validateDraft(base, TODAY), null);
   assert.match(validateDraft({ ...base, date: '2026-11-08' }, TODAY), /already been released/);
+  assert.match(validateDraft({ ...base, date: '' }, TODAY), /already been released/);
   assert.match(validateDraft({ ...base, times: [] }, TODAY), /at least one time/);
   assert.match(validateDraft({ ...base, opponent: null }, TODAY), /opponent/);
   assert.equal(validateDraft({ ...base, opponent: null, separately: true }, TODAY), null);
-  assert.equal(validateDraft({ ...base, mode: 'weekly', date: null }, TODAY), null);
 });
 
 test('new picks have the shape book.py reads', () => {
-  const once = newPick({ mode: 'once', date: '2026-11-09', weekday: 'Monday', times: ['19:00', '20:00'], court: 5, opponent: { id: 42, name: 'A B', extra: 1 } }, 'x');
-  assert.deepEqual(once, {
+  const pick = newPick({ date: '2026-11-09', times: ['19:00', '20:00'], court: 5, opponent: { id: 42, name: 'A B', extra: 1 } }, 'x');
+  assert.deepEqual(pick, {
     id: 'x', date: '2026-11-09', times: ['19:00', '20:00'], courts: [5], opponent: { id: 42, name: 'A B' },
   });
-  const weekly = newPick({ mode: 'weekly', date: '2026-11-09', weekday: 'Monday', times: ['19:00'], court: null, opponent: null }, 'y');
-  assert.deepEqual(weekly, { id: 'y', weekday: 'Monday', times: ['19:00'], courts: [], opponent: null });
+  assert.deepEqual(newPick({ date: '2026-11-09', times: ['19:00'], court: null, opponent: null }, 'y').courts, []);
 });

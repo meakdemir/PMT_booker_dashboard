@@ -49,21 +49,21 @@ export function nextOccurrence(weekday, today) {
   return date;
 }
 
-export function nextAttempt(pick, today) {
-  if (pick.paused) return null;
-  const date = pick.weekday ? nextOccurrence(pick.weekday, today) : pick.date;
-  if (date < earliestDate(today)) return null;
-  return { date, opensOn: addDays(date, -BOOKING_DAYS) };
+export function bookingWhen(date, today) {
+  const opensOn = addDays(date, -BOOKING_DAYS);
+  return opensOn === addDays(today, 1)
+    ? `tonight at 00:00 (${dateLabel(opensOn)})`
+    : `at 00:00 on ${dateLabel(opensOn)}`;
 }
 
 export function attemptLabel(pick, today) {
-  if (pick.paused) return 'Paused';
-  const attempt = nextAttempt(pick, today);
-  if (!attempt) return 'Already released';
-  const when = attempt.opensOn === addDays(today, 1)
-    ? `tonight at 00:00 (${dateLabel(attempt.opensOn)})`
-    : `at 00:00 on ${dateLabel(attempt.opensOn)}`;
-  return pick.weekday ? `Next: ${dateLabel(attempt.date)}, booking ${when}` : `Booking ${when}`;
+  if (pick.date < earliestDate(today)) return 'Already released';
+  return `Booking ${bookingWhen(pick.date, today)}`;
+}
+
+export function weeklyLabel(weekday, today) {
+  const date = nextOccurrence(weekday, today);
+  return `Next: ${dateLabel(date)}, booking ${bookingWhen(date, today)}`;
 }
 
 // The last run starts at 23:37 and reads your picks when it starts.
@@ -72,7 +72,7 @@ export function tooLateTonight(date, today, minutes) {
 }
 
 export function pickTitle(pick) {
-  return pick.weekday ? `Every ${pick.weekday}` : dateLabel(pick.date);
+  return dateLabel(pick.date);
 }
 
 export function hourStarts(hours) {
@@ -116,22 +116,44 @@ export function isMemberHere(attributes) {
   );
 }
 
+export function emptyWeekly() {
+  return { slots: [], opponent: null, courts: [] };
+}
+
 export function emptyPlan() {
-  return { live: false, picks: [] };
+  return { live: false, picks: [], weekly: emptyWeekly() };
 }
 
 export function parsePlan(text) {
   if (!text || !text.trim()) return emptyPlan();
   const data = JSON.parse(text);
-  return { live: data.live === true, picks: Array.isArray(data.picks) ? data.picks : [] };
+  const weekly = { ...emptyWeekly(), ...(data.weekly || {}) };
+  return {
+    live: data.live === true,
+    picks: Array.isArray(data.picks) ? data.picks : [],
+    weekly: { ...weekly, slots: Array.isArray(weekly.slots) ? weekly.slots : [] },
+  };
 }
 
 export function withoutPastPicks(plan, today) {
-  return { ...plan, picks: plan.picks.filter((pick) => pick.weekday || pick.date >= today) };
+  return { ...plan, picks: plan.picks.filter((pick) => pick.date >= today) };
+}
+
+export function slotsFor(weekly, weekday) {
+  return weekly.slots.filter((slot) => slot.weekday === weekday).map((slot) => slot.time).sort();
+}
+
+export function toggleSlot(weekly, weekday, time) {
+  const isSame = (slot) => slot.weekday === weekday && slot.time === time;
+  const slots = weekly.slots.some(isSame)
+    ? weekly.slots.filter((slot) => !isSame(slot))
+    : [...weekly.slots, { weekday, time }];
+  slots.sort((a, b) => WEEKDAYS.indexOf(a.weekday) - WEEKDAYS.indexOf(b.weekday) || a.time.localeCompare(b.time));
+  return { ...weekly, slots };
 }
 
 export function validateDraft(draft, today) {
-  if (draft.mode === 'once' && !(draft.date >= earliestDate(today))) {
+  if (!(draft.date >= earliestDate(today))) {
     return `Choose ${dateLabel(earliestDate(today))} or later. Earlier dates have already been released, so book those in the app.`;
   }
   if (!draft.times.length) return 'Choose at least one time.';
@@ -142,7 +164,7 @@ export function validateDraft(draft, today) {
 export function newPick(draft, id) {
   return {
     id,
-    ...(draft.mode === 'weekly' ? { weekday: draft.weekday } : { date: draft.date }),
+    date: draft.date,
     times: [...draft.times],
     courts: draft.court ? [draft.court] : [],
     opponent: draft.opponent ? { id: draft.opponent.id, name: draft.opponent.name } : null,

@@ -57,58 +57,75 @@
         <p id="switch-note" class="note"></p>
       </section>
 
-      <form id="add-pick" class="card stack">
-        <h2>Add a booking</h2>
-
-        <fieldset class="segments">
-          <legend>How often</legend>
-          <label><input id="mode-once" type="radio" name="mode" checked> <span>One date</span></label>
-          <label><input id="mode-weekly" type="radio" name="mode"> <span>Every week</span></label>
-        </fieldset>
-
-        <div id="date-field" class="stack">
-          <label for="date">Date</label>
-          <input id="date" type="date">
-        </div>
-        <div id="weekday-field" class="stack" hidden>
-          <label for="weekday">Day</label>
-          <select id="weekday"></select>
-        </div>
-        <p id="late-note" class="note warn" hidden>Tonight's last run has probably started, so this may not be picked up.</p>
-
-        <div class="stack">
-          <h3>Times, in the order you'd like them</h3>
-          <p id="preview-note" class="note"></p>
-          <div id="times" class="chips"></div>
-        </div>
-
-        <div class="stack">
-          <label for="court">Preferred court</label>
-          <select id="court"></select>
-          <p class="note">If it's taken, the booker tries the other courts at the same time.</p>
-        </div>
-
-        <div class="stack">
-          <h3>Opponent</h3>
-          <div id="opponent-picked" class="row" hidden>
-            <span id="opponent-name"></span>
-            <button id="opponent-clear" type="button" class="quiet">Change</button>
-          </div>
-          <div id="opponent-search-area" class="stack">
-            <label for="opponent-search">Search members</label>
-            <input id="opponent-search" type="search" autocomplete="off">
-            <ul id="opponent-results" class="plain"></ul>
-          </div>
-          <label class="check"><input id="separately" type="checkbox"> <span>I'll arrange my opponent myself</span></label>
-        </div>
-
-        <button type="submit">Save booking</button>
-      </form>
-
       <section class="card">
-        <h2>Your bookings to make</h2>
-        <p id="picks-empty" class="note">Nothing saved yet.</p>
-        <ul id="picks" class="plain"></ul>
+        <fieldset class="segments">
+          <legend>What to set up</legend>
+          <label><input id="view-once" type="radio" name="view" checked> <span>One date</span></label>
+          <label><input id="view-weekly" type="radio" name="view"> <span>Weekly plan</span></label>
+        </fieldset>
+      </section>
+
+      <div id="once-view">
+        <form id="add-pick" class="card stack">
+          <h2>Add a booking for one date</h2>
+          <p class="note">This makes one booking, using the first of your times that's free. For two slots on one day, add two bookings.</p>
+
+          <div class="stack">
+            <label for="date">Date</label>
+            <input id="date" type="date">
+          </div>
+          <p id="late-note" class="note warn" hidden>Tonight's last run has probably started, so this may not be picked up.</p>
+
+          <div class="stack">
+            <h3>Times, in the order you'd like them</h3>
+            <p id="preview-note" class="note"></p>
+            <div id="times" class="chips"></div>
+          </div>
+
+          <div class="stack">
+            <label for="court">Preferred court</label>
+            <select id="court"></select>
+            <p class="note">If it's taken, the booker tries the other courts at the same time.</p>
+          </div>
+
+          <div class="stack">
+            <h3>Opponent</h3>
+            <div id="once-opponent"></div>
+            <label class="check"><input id="separately" type="checkbox"> <span>I'll arrange my opponent myself</span></label>
+          </div>
+
+          <button type="submit">Save booking</button>
+        </form>
+
+        <section class="card">
+          <h2>One-date bookings to make</h2>
+          <p id="picks-empty" class="note">Nothing saved yet.</p>
+          <ul id="picks" class="plain"></ul>
+        </section>
+      </div>
+
+      <section id="weekly-view" class="card stack" hidden>
+        <div class="row">
+          <h2>Weekly plan</h2>
+          <span id="weekly-status" class="note" role="status"></span>
+        </div>
+        <p class="note">Tap every slot you want each week. Each one gets its own booking when it's released, and your changes save straight away.</p>
+
+        <ul id="weekly-summary" class="plain"></ul>
+
+        <div id="weekly-days" class="days"></div>
+
+        <div class="stack">
+          <label for="weekly-court">Preferred court</label>
+          <select id="weekly-court"></select>
+          <p class="note">If it's taken, the booker tries the other courts. Back-to-back slots stay on one court if they can.</p>
+        </div>
+
+        <div class="stack">
+          <h3>Opponent for all weekly slots</h3>
+          <div id="weekly-opponent"></div>
+          <p id="weekly-opponent-note" class="note">No opponent chosen, so you'll arrange your own.</p>
+        </div>
       </section>
 
       <section class="card">

@@ -1,7 +1,7 @@
 import {
-  FACILITY_ID, MAX_TIMES, WEEKDAYS, attemptLabel, dateLabel, earliestDate, emptyPlan, freeCourts,
-  hourStarts, isMemberHere, memberSearchPath, newPick, nextOccurrence, parsePlan, pickTitle,
-  tooLateTonight, ukMinutes, ukToday, validateDraft, weekdayOf, withoutPastPicks,
+  FACILITY_ID, MAX_TIMES, WEEKDAYS, addDays, attemptLabel, dateLabel, earliestDate, emptyPlan, freeCourts,
+  hourStarts, isMemberHere, memberSearchPath, newPick, nextOccurrence, parsePlan, pickTitle, slotsFor,
+  toggleSlot, tooLateTonight, ukMinutes, ukToday, validateDraft, weekdayOf, weeklyLabel, withoutPastPicks,
 } from './logic.js';
 
 const REPO = 'meakdemir/PMT_booker';
@@ -38,21 +38,14 @@ const state = {
   hours: {},
   myPlayerId: null,
   bookings: [],
+  weeklyBookings: [],
   results: [],
   draft: null,
+  view: saved.read('view') === 'weekly' ? 'weekly' : 'once',
 };
 
-function freshDraft() {
-  const today = ukToday();
-  return {
-    mode: 'once',
-    date: earliestDate(today),
-    weekday: 'Monday',
-    times: [],
-    court: null,
-    opponent: null,
-    separately: false,
-  };
+function freshDraft(date = earliestDate(ukToday())) {
+  return { date, times: [], court: null, opponent: null, separately: false };
 }
 
 function say(text, isError = false) {
@@ -126,7 +119,7 @@ async function changePlan(change, doneMessage) {
     const plan = await loadPlan();
     change(plan);
     await savePlan(plan);
-    state.plan = withoutPastPicks(plan, ukToday());
+    state.plan = { ...withoutPastPicks(plan, ukToday()), weekly: state.plan.weekly };
     renderSwitch();
     renderPicks();
     say(doneMessage);
@@ -142,6 +135,116 @@ async function loadResults() {
   return response.ok ? response.json() : [];
 }
 
+async function fetchBookings(dateFilter) {
+  const rows = [];
+  let page = 1;
+  let pageCount = 1;
+  while (page <= pageCount) {
+    const body = await pmt(
+      `bookings?sort=id:asc&populate[court][fields][0]=name&${dateFilter}`
+      + `&filters[facility]=${FACILITY_ID}&pagination[page]=${page}&pagination[pageSize]=100`,
+    );
+    rows.push(...body.data);
+    pageCount = body.meta?.pagination?.pageCount ?? 1;
+    page += 1;
+  }
+  return rows
+    .filter((row) => row.attributes.slot && row.attributes.court?.data)
+    .map((row) => ({
+      date: row.attributes.date,
+      court: row.attributes.court.data.id,
+      from: row.attributes.slot.from,
+      to: row.attributes.slot.to,
+    }));
+}
+
+// --- Choosing an opponent --------------------------------------------------------
+
+function opponentPicker(prefix, { read, write, afterChange = () => {} }) {
+  const name = el('span');
+  const picked = el('div', { class: 'row' }, name, el('button', {
+    type: 'button',
+    class: 'quiet',
+    textContent: 'Change',
+    onclick: () => {
+      write(null);
+      render();
+      afterChange();
+    },
+  }));
+  const input = el('input', { id: `${prefix}-opponent-search`, type: 'search', autocomplete: 'off' });
+  const results = el('ul', { class: 'plain' });
+  const searchArea = el('div', { class: 'stack' },
+    el('label', { htmlFor: input.id, textContent: 'Search members' }), input, results);
+  const root = el('div', { class: 'stack' }, picked, searchArea);
+  let hideSearch = false;
+  let timer;
+
+  function render() {
+    const current = read();
+    picked.hidden = !current;
+    name.textContent = current ? current.name : '';
+    searchArea.hidden = !!current || hideSearch;
+  }
+
+  function choose(member) {
+    write(member);
+    input.value = '';
+    results.replaceChildren();
+    render();
+    afterChange();
+  }
+
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const text = input.value.trim();
+    if (text.length < 2) {
+      results.replaceChildren();
+      return;
+    }
+    timer = setTimeout(async () => {
+      try {
+        const body = await pmt(memberSearchPath(text));
+        const members = body.data
+          .filter((row) => row.id !== state.myPlayerId && isMemberHere(row.attributes))
+          .map((row) => ({ id: row.id, name: `${row.attributes.firstname} ${row.attributes.surname}` }));
+        results.replaceChildren(...(members.length
+          ? members.map((member) => el('li', {}, el('button', {
+            type: 'button', class: 'quiet wide', textContent: member.name, onclick: () => choose(member),
+          })))
+          : [el('li', { class: 'note', textContent: 'No members found.' })]));
+      } catch (error) {
+        say(error.message, true);
+      }
+    }, 300);
+  });
+
+  return {
+    root,
+    render,
+    setSearchHidden(value) {
+      hideSearch = value;
+      render();
+    },
+  };
+}
+
+const onceOpponent = opponentPicker('once', {
+  read: () => state.draft?.opponent,
+  write: (member) => { state.draft.opponent = member; },
+});
+
+const weeklyOpponent = opponentPicker('weekly', {
+  read: () => state.plan.weekly.opponent,
+  write: (member) => {
+    state.plan.weekly = { ...state.plan.weekly, opponent: member };
+  },
+  afterChange: () => {
+    renderWeeklyOpponentNote();
+    queueWeeklySave();
+  },
+});
+
 // --- Rendering -------------------------------------------------------------------
 
 function renderSwitch() {
@@ -154,39 +257,42 @@ function renderSwitch() {
   $('switch-button').textContent = on ? 'Turn off' : 'Turn on';
 }
 
-function previewDate() {
-  const { draft } = state;
-  return draft.mode === 'once' ? draft.date : nextOccurrence(draft.weekday, ukToday());
+function renderView() {
+  $('view-once').checked = state.view === 'once';
+  $('view-weekly').checked = state.view === 'weekly';
+  $('once-view').hidden = state.view !== 'once';
+  $('weekly-view').hidden = state.view !== 'weekly';
 }
 
-function renderDraftMode() {
+function chip(start, note, { selected, full, onclick }) {
+  return el('button', {
+    type: 'button',
+    class: `chip${selected ? ' selected' : ''}${full ? ' full' : ''}`,
+    'aria-pressed': String(selected),
+    onclick,
+  },
+  el('span', { class: 'chip-time', textContent: start }),
+  el('span', { class: 'chip-note', textContent: note }));
+}
+
+function renderDraftDate() {
   const { draft } = state;
   const today = ukToday();
-  $('mode-once').checked = draft.mode === 'once';
-  $('mode-weekly').checked = draft.mode === 'weekly';
-  $('date-field').hidden = draft.mode !== 'once';
-  $('weekday-field').hidden = draft.mode !== 'weekly';
   $('date').min = earliestDate(today);
   $('date').value = draft.date;
-  $('weekday').value = draft.weekday;
-
-  const date = previewDate();
-  if (!date) {
+  if (!draft.date) {
     $('preview-note').textContent = 'Choose a date to see free courts.';
     $('late-note').hidden = true;
     return;
   }
-  $('preview-note').textContent = draft.mode === 'weekly'
-    ? `Free courts shown for ${dateLabel(date)}, the next one. Other weeks can differ.`
-    : `Courts free so far on ${dateLabel(date)}. Full means already blocked before release.`;
-  $('late-note').hidden = !tooLateTonight(date, today, ukMinutes());
+  $('preview-note').textContent = `Courts free so far on ${dateLabel(draft.date)}. Full means already blocked before release.`;
+  $('late-note').hidden = !tooLateTonight(draft.date, today, ukMinutes());
 }
 
 function renderTimes() {
   const { draft, courts, bookings, hours } = state;
-  const date = previewDate();
   const box = $('times');
-  const starts = date ? hourStarts(hours[weekdayOf(date)]) : [];
+  const starts = draft.date ? hourStarts(hours[weekdayOf(draft.date)]) : [];
   if (!starts.length) {
     box.replaceChildren(el('p', { class: 'note', textContent: 'Closed that day.' }));
     return;
@@ -194,17 +300,8 @@ function renderTimes() {
   box.replaceChildren(...starts.map((start) => {
     const free = freeCourts(start, courts, bookings).length;
     const order = draft.times.indexOf(start);
-    return el('button', {
-      type: 'button',
-      class: `chip${order >= 0 ? ' selected' : ''}${free === 0 ? ' full' : ''}`,
-      'aria-pressed': String(order >= 0),
-      onclick: () => toggleTime(start),
-    },
-    el('span', { class: 'chip-time', textContent: start }),
-    el('span', {
-      class: 'chip-note',
-      textContent: order >= 0 ? `Choice ${order + 1}` : free === 0 ? 'Full' : `${free} free`,
-    }));
+    const note = order >= 0 ? `Choice ${order + 1}` : free === 0 ? 'Full' : `${free} free`;
+    return chip(start, note, { selected: order >= 0, full: free === 0, onclick: () => toggleTime(start) });
   }));
 }
 
@@ -216,55 +313,95 @@ function toggleTime(start) {
   renderTimes();
 }
 
-function renderCourts() {
-  $('court').replaceChildren(
+function courtOptions(select, chosen) {
+  select.replaceChildren(
     el('option', { value: '', textContent: 'Any court' }),
     ...state.courts.map((court) => el('option', { value: String(court.id), textContent: court.name })),
   );
-  $('court').value = state.draft.court ? String(state.draft.court) : '';
-}
-
-function renderOpponent() {
-  const { draft } = state;
-  $('opponent-picked').hidden = !draft.opponent;
-  $('opponent-search-area').hidden = !!draft.opponent || draft.separately;
-  $('opponent-name').textContent = draft.opponent ? draft.opponent.name : '';
-  $('separately').checked = draft.separately;
+  select.value = chosen ? String(chosen) : '';
 }
 
 function renderPicks() {
   const today = ukToday();
   const { picks } = state.plan;
   $('picks-empty').hidden = picks.length > 0;
-  $('picks').replaceChildren(...picks.map((pick) => {
-    const actions = [];
-    if (pick.weekday) {
-      actions.push(el('button', {
+  $('picks').replaceChildren(...picks.map((pick) => el('li', { class: 'pick' },
+    el('div', { class: 'pick-head' },
+      el('strong', { textContent: pickTitle(pick) }),
+      el('span', { class: 'pick-actions' }, el('button', {
         type: 'button',
         class: 'quiet',
-        textContent: pick.paused ? 'Resume' : 'Pause',
+        textContent: 'Remove',
         onclick: () => changePlan((plan) => {
-          const match = plan.picks.find((item) => item.id === pick.id);
-          if (match) match.paused = !match.paused;
-        }, pick.paused ? 'Resumed.' : 'Paused.'),
+          plan.picks = plan.picks.filter((item) => item.id !== pick.id);
+        }, 'Removed.'),
+      }))),
+    el('p', { textContent: pick.times.join(', then ') }),
+    el('p', { textContent: pick.opponent ? `With ${pick.opponent.name}` : 'Opponent arranged separately' }),
+    el('p', { class: 'note', textContent: attemptLabel(pick, today) }))));
+}
+
+function renderWeeklySummary() {
+  const { weekly } = state.plan;
+  const days = WEEKDAYS.filter((day) => slotsFor(weekly, day).length);
+  $('weekly-summary').replaceChildren(...(days.length
+    ? days.map((day) => el('li', {},
+      el('strong', { textContent: `${day}: ` }), slotsFor(weekly, day).join(', ')))
+    : [el('li', { class: 'note', textContent: 'No slots chosen yet.' })]));
+}
+
+function renderWeeklyDays() {
+  const { weekly } = state.plan;
+  const today = ukToday();
+  $('weekly-days').replaceChildren(...WEEKDAYS.map((day) => {
+    const date = nextOccurrence(day, today);
+    const bookings = state.weeklyBookings.filter((booking) => booking.date === date);
+    const chosen = slotsFor(weekly, day);
+    const starts = hourStarts(state.hours[day]);
+    const fullChosen = chosen.filter((time) => freeCourts(time, state.courts, bookings).length === 0);
+
+    const section = el('div', { class: 'day' }, el('h3', { textContent: day }));
+    section.append(starts.length
+      ? el('div', { class: 'chips' }, ...starts.map((start) => {
+        const free = freeCourts(start, state.courts, bookings).length;
+        const selected = chosen.includes(start);
+        const count = free === 0 ? 'Full' : `${free} free`;
+        return chip(start, selected ? `✓ ${count}` : count, {
+          selected,
+          full: free === 0,
+          onclick: () => {
+            state.plan.weekly = toggleSlot(state.plan.weekly, day, start);
+            renderWeekly();
+            queueWeeklySave();
+          },
+        });
+      }))
+      : el('p', { class: 'note', textContent: 'Closed.' }));
+    if (chosen.length) section.append(el('p', { class: 'note', textContent: weeklyLabel(day, today) }));
+    if (fullChosen.length) {
+      section.append(el('p', {
+        class: 'note warn',
+        textContent: `${fullChosen.join(', ')} is full on ${dateLabel(date)} so far, so it won't book that week unless a court comes free.`,
       }));
     }
-    actions.push(el('button', {
-      type: 'button',
-      class: 'quiet',
-      textContent: 'Remove',
-      onclick: () => changePlan((plan) => {
-        plan.picks = plan.picks.filter((item) => item.id !== pick.id);
-      }, 'Removed.'),
-    }));
-    return el('li', { class: 'pick' },
-      el('div', { class: 'pick-head' },
-        el('strong', { textContent: pickTitle(pick) }),
-        el('span', { class: 'pick-actions' }, ...actions)),
-      el('p', { textContent: pick.times.join(', then ') }),
-      el('p', { textContent: pick.opponent ? `With ${pick.opponent.name}` : 'Opponent arranged separately' }),
-      el('p', { class: 'note', textContent: attemptLabel(pick, today) }));
+    if (chosen.length && tooLateTonight(date, today, ukMinutes())) {
+      section.append(el('p', {
+        class: 'note warn',
+        textContent: 'Tonight\'s last run has probably started, so this change may not count until next week.',
+      }));
+    }
+    return section;
   }));
+}
+
+function renderWeeklyOpponentNote() {
+  $('weekly-opponent-note').hidden = !!state.plan.weekly.opponent;
+}
+
+function renderWeekly() {
+  renderWeeklySummary();
+  renderWeeklyDays();
+  renderWeeklyOpponentNote();
 }
 
 function renderResults() {
@@ -282,33 +419,55 @@ function showScreen() {
   $('app').hidden = needsPmt || needsGithub;
 }
 
-// --- Loading ---------------------------------------------------------------------
+// --- Saving the weekly plan ------------------------------------------------------
 
-async function loadBookings() {
-  const date = previewDate();
-  if (!date) {
-    state.bookings = [];
-    return;
-  }
-  const body = await pmt(
-    'bookings?sort=id:asc&populate[court][fields][0]=name'
-    + `&filters[date][$eq]=${date}&filters[facility]=${FACILITY_ID}&pagination[pageSize]=100`,
-  );
-  state.bookings = body.data
-    .filter((row) => row.attributes.slot && row.attributes.court?.data)
-    .map((row) => ({
-      court: row.attributes.court.data.id,
-      from: row.attributes.slot.from,
-      to: row.attributes.slot.to,
-    }));
+let weeklyTimer;
+let weeklySaving = false;
+let weeklyChangedAgain = false;
+
+function queueWeeklySave() {
+  $('weekly-status').textContent = 'Saving...';
+  clearTimeout(weeklyTimer);
+  weeklyTimer = setTimeout(saveWeekly, 400);
 }
 
-async function refreshPreview() {
-  renderDraftMode();
+async function saveWeekly() {
+  if (weeklySaving) {
+    weeklyChangedAgain = true;
+    return;
+  }
+  weeklySaving = true;
   try {
-    await loadBookings();
-    const open = hourStarts(state.hours[weekdayOf(previewDate() || ukToday())]);
-    state.draft.times = state.draft.times.filter((time) => open.includes(time));
+    const plan = await loadPlan();
+    plan.weekly = state.plan.weekly;
+    await savePlan(plan);
+    state.plan.live = plan.live;
+    state.plan.picks = withoutPastPicks(plan, ukToday()).picks;
+    renderSwitch();
+    renderPicks();
+    $('weekly-status').textContent = 'Saved';
+    say('');
+  } catch (error) {
+    $('weekly-status').textContent = 'Not saved';
+    say(error.message, true);
+  } finally {
+    weeklySaving = false;
+    if (weeklyChangedAgain) {
+      weeklyChangedAgain = false;
+      saveWeekly();
+    }
+  }
+}
+
+// --- Loading ---------------------------------------------------------------------
+
+async function refreshPreview() {
+  renderDraftDate();
+  try {
+    const { draft } = state;
+    state.bookings = draft.date ? await fetchBookings(`filters[date][$eq]=${draft.date}`) : [];
+    const open = draft.date ? hourStarts(state.hours[weekdayOf(draft.date)]) : [];
+    draft.times = draft.times.filter((time) => open.includes(time));
     renderTimes();
   } catch (error) {
     say(error.message, true);
@@ -336,10 +495,18 @@ async function loadApp() {
     state.draft = freshDraft();
     state.plan = await loadPlan();
     state.results = await loadResults();
+    const first = earliestDate(ukToday());
+    state.weeklyBookings = await fetchBookings(
+      `filters[date][$gte]=${first}&filters[date][$lte]=${addDays(first, 6)}`,
+    );
+    renderView();
     renderSwitch();
-    renderCourts();
-    renderOpponent();
+    courtOptions($('court'), null);
+    courtOptions($('weekly-court'), state.plan.weekly.courts[0]);
+    onceOpponent.render();
+    weeklyOpponent.render();
     renderPicks();
+    renderWeekly();
     renderResults();
     await refreshPreview();
     say('');
@@ -382,41 +549,6 @@ function logOut() {
   showScreen();
 }
 
-let searchTimer;
-
-function searchMembers() {
-  clearTimeout(searchTimer);
-  const text = $('opponent-search').value.trim();
-  if (text.length < 2) {
-    $('opponent-results').replaceChildren();
-    return;
-  }
-  searchTimer = setTimeout(async () => {
-    try {
-      const body = await pmt(memberSearchPath(text));
-      const members = body.data
-        .filter((row) => row.id !== state.myPlayerId && isMemberHere(row.attributes))
-        .map((row) => ({ id: row.id, name: `${row.attributes.firstname} ${row.attributes.surname}` }));
-      $('opponent-results').replaceChildren(...(members.length
-        ? members.map((member) => el('li', {},
-          el('button', {
-            type: 'button',
-            class: 'quiet wide',
-            textContent: member.name,
-            onclick: () => {
-              state.draft.opponent = member;
-              $('opponent-search').value = '';
-              $('opponent-results').replaceChildren();
-              renderOpponent();
-            },
-          })))
-        : [el('li', { class: 'note', textContent: 'No members found.' })]));
-    } catch (error) {
-      say(error.message, true);
-    }
-  }, 300);
-}
-
 async function addPick(event) {
   event.preventDefault();
   const { draft } = state;
@@ -428,14 +560,17 @@ async function addPick(event) {
   const pick = newPick(draft, crypto.randomUUID());
   const added = await changePlan((plan) => plan.picks.push(pick), `Saved ${pickTitle(pick)}.`);
   if (added) {
-    state.draft = { ...freshDraft(), mode: draft.mode, date: draft.date, weekday: draft.weekday };
-    renderOpponent();
-    renderCourts();
+    state.draft = freshDraft(draft.date);
+    $('separately').checked = false;
+    onceOpponent.setSearchHidden(false);
+    courtOptions($('court'), null);
     renderTimes();
   }
 }
 
 function wire() {
+  $('once-opponent').append(onceOpponent.root);
+  $('weekly-opponent').append(weeklyOpponent.root);
   $('pmt-login').addEventListener('submit', logInToPmt);
   $('github-login').addEventListener('submit', saveGithubToken);
   $('log-out').addEventListener('click', logOut);
@@ -444,33 +579,29 @@ function wire() {
     const next = !state.plan.live;
     changePlan((plan) => { plan.live = next; }, next ? 'Automatic booking is on.' : 'Automatic booking is off.');
   });
-  for (const id of ['mode-once', 'mode-weekly']) {
+  for (const id of ['view-once', 'view-weekly']) {
     $(id).addEventListener('change', () => {
-      state.draft.mode = $('mode-weekly').checked ? 'weekly' : 'once';
-      refreshPreview();
+      state.view = $('view-weekly').checked ? 'weekly' : 'once';
+      saved.write('view', state.view);
+      renderView();
     });
   }
   $('date').addEventListener('change', () => {
     state.draft.date = $('date').value;
     refreshPreview();
   });
-  $('weekday').replaceChildren(...WEEKDAYS.map((day) => el('option', { value: day, textContent: day })));
-  $('weekday').addEventListener('change', () => {
-    state.draft.weekday = $('weekday').value;
-    refreshPreview();
-  });
   $('court').addEventListener('change', () => {
     state.draft.court = $('court').value ? Number($('court').value) : null;
   });
-  $('opponent-search').addEventListener('input', searchMembers);
-  $('opponent-clear').addEventListener('click', () => {
-    state.draft.opponent = null;
-    renderOpponent();
+  $('weekly-court').addEventListener('change', () => {
+    const court = $('weekly-court').value;
+    state.plan.weekly = { ...state.plan.weekly, courts: court ? [Number(court)] : [] };
+    queueWeeklySave();
   });
   $('separately').addEventListener('change', () => {
     state.draft.separately = $('separately').checked;
     if (state.draft.separately) state.draft.opponent = null;
-    renderOpponent();
+    onceOpponent.setSearchHidden(state.draft.separately);
   });
 }
 
